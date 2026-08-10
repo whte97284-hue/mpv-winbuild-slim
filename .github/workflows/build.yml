@@ -29,8 +29,8 @@ jobs:
           sudo pacman-key --populate archlinux
           sudo pacman -Syu --noconfirm || true
           sudo pacman -Syu --noconfirm || true
-          sudo pacman -S --noconfirm --needed git ninja cmake meson unzip ragel nasm gperf python-cairo curl wget mimalloc go 7zip ccache || true
-          sudo pacman -S --noconfirm --needed git ninja cmake meson unzip ragel nasm gperf python-cairo curl wget mimalloc go 7zip ccache || true
+          sudo pacman -S --noconfirm --needed git ninja cmake meson unzip ragel nasm gperf rst2pdf python-cairo curl wget mimalloc go 7zip ccache wine shaderc || true
+          sudo pacman -S --noconfirm --needed git ninja cmake meson unzip ragel nasm gperf rst2pdf python-cairo curl wget mimalloc go 7zip ccache wine shaderc || true
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --global pull.rebase true
@@ -68,8 +68,9 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          cd build-src
-          bash build.sh -t '${{ inputs.build_target }}' -c clang -s false
+          # build.sh 在 mpv-winbuild 仓库根，需从 mpv-winbuild-cmake 目录内调用（../build.sh）
+          cd build-src/mpv-winbuild-cmake
+          bash ../build.sh -t '${{ inputs.build_target }}' -c clang -s false
       - name: Locate mpv artifact
         id: loc
         shell: bash
