@@ -1,0 +1,93 @@
+name: Build Slim MPV
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_target:
+        description: 'Build target (CPU baseline)'
+        required: false
+        default: '64-v3'
+        type: choice
+        options:
+        - 64-v3
+        - 64-v4
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    name: Build MPV Slim
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/archlinux/archlinux:base-devel
+    steps:
+      - name: Install Dependencies
+        run: |
+          sudo pacman-key --init
+          sudo pacman-key --populate archlinux
+          sudo pacman -Syu --noconfirm || true
+          sudo pacman -Syu --noconfirm || true
+          sudo pacman -S --noconfirm --needed git ninja cmake meson unzip ragel nasm gperf python-cairo curl wget mimalloc go 7zip ccache || true
+          sudo pacman -S --noconfirm --needed git ninja cmake meson unzip ragel nasm gperf python-cairo curl wget mimalloc go 7zip ccache || true
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --global pull.rebase true
+          git config --global rebase.autoStash true
+          git config --global fetch.prune true
+          sudo GOBIN=/usr/bin go install go.chromium.org/luci/cipd/client/cmd/...@latest
+          sudo cipd install fuchsia/third_party/clang/linux-amd64 nightly -root /usr/local/fuchsia-clang
+          echo "PATH=/usr/local/fuchsia-clang/bin:$PATH" >> $GITHUB_ENV
+      - uses: actions/checkout@v7
+        with:
+          repository: Andarwinux/mpv-winbuild
+          path: build-src
+      - uses: actions/checkout@v7
+        with:
+          repository: Andarwinux/mpv-winbuild-cmake
+          path: build-src/mpv-winbuild-cmake
+          fetch-depth: 0
+      - name: Prepare
+        run: |
+          echo "short_time=$(date "+%Y-%m-%d")" >> $GITHUB_ENV
+          echo "cache_suffix=$(date "+%Y-%m-%d")-${{ github.run_id }}-${{ github.run_attempt }}" >> $GITHUB_ENV
+          sed -i '/ccache_conf.in/d'  build-src/mpv-winbuild-cmake/CMakeLists.txt
+          sed -i '/ccache/d' build-src/mpv-winbuild-cmake/exec.in
+      - name: Slim down ffmpeg (playback essentials only)
+        shell: bash
+        run: |
+          cd build-src/mpv-winbuild-cmake
+          # 只保留播放必需：解码(h264/hevc/av1/vp9/aac/opus/mp3/flac) + 硬解(d3d11va/dxva2) + 渲染(opengl/vulkan) + 字幕(libass) + 网络(http/tls)
+          # 砍掉：编码器(NVENC/x265/fdk) / 特殊格式(蓝光/直播/whisper/vapoursynth) / 编辑滤镜
+          sed -i '/--enable-amf/d; /--enable-avisynth/d; /--enable-cuda-llvm/d; /--enable-cuvid/d; /--enable-d3d12va/d; /--enable-ffnvcodec/d; /--enable-frei0r/d; /--enable-libcodec2/d; /--enable-libdvdnav/d; /--enable-libdvdread/d; /--enable-libfdk-aac/d; /--enable-libgme/d; /--enable-libjxl/d; /--enable-liblc3/d; /--enable-libmodplug/d; /--enable-libmysofa/d; /--enable-librubberband/d; /--enable-libsrt/d; /--enable-libssh/d; /--enable-libsvtav1/d; /--enable-libvidstab/d; /--enable-libvpl/d; /--enable-libx265/d; /--enable-libxml2/d; /--enable-mediafoundation/d; /--enable-nvenc/d; /--enable-nvdec/d; /--enable-openal/d; /--enable-opencl/d; /--enable-sdl2/d; /--enable-vaapi/d; /--enable-vapoursynth/d; /--enable-whisper/d; /--enable-libbluray/d; /--enable-libaom/d' packages/ffmpeg.cmake
+          # 编码器/封装：纯播放不需要
+          sed -i 's/--disable-ffplay/--disable-ffplay\n        --disable-encoders\n        --disable-muxers/' packages/ffmpeg.cmake
+          echo "=== 保留的 --enable ==="
+          grep -o '\-\-enable[^ ]*' packages/ffmpeg.cmake | grep -v disable
+      - name: Build
+        shell: bash
+        run: |
+          cd build-src
+          bash build.sh -t '${{ inputs.build_target }}' -c clang -s false
+      - name: Locate mpv artifact
+        id: loc
+        shell: bash
+        run: |
+          f=$(ls build-src/mpv-winbuild-cmake/release/mpv-*.7z 2>/dev/null | head -1)
+          echo "mpv_7z=$f" >> "$GITHUB_OUTPUT"
+          ls -la build-src/mpv-winbuild-cmake/release/ 2>/dev/null | head
+      - name: Upload mpv
+        uses: actions/upload-artifact@v7
+        with:
+          name: mpv-slim-${{ inputs.build_target }}
+          path: build-src/mpv-winbuild-cmake/release/mpv-*.7z
+          if-no-files-found: error
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-logs-${{ inputs.build_target }}
+          path: |
+            build-src/mpv-winbuild-cmake/build${{ inputs.build_target }}/*.log
+            build-src/mpv-winbuild-cmake/build${{ inputs.build_target }}/**/ffbuild/config.log
